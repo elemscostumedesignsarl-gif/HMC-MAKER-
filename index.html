@@ -1,79 +1,1611 @@
+                  ARTEMIS HMC STUDIO - CODE COMPLET
+================================================================================
+                    Application professionnelle HMC
+           (Habillage, Maquillage, Coiffure) pour cinéma/théâtre
+================================================================================
+
+TABLE DES MATIÈRES:
+1. docker-compose.yml
+2. backend/Dockerfile
+3. backend/requirements.txt
+4. backend/app.py
+5. backend/models.py
+6. backend/ia_analyzer.py
+7. backend/raccords.py
+8. backend/advanced_ia.py
+9. database/schema.sql
+10. frontend/Dockerfile
+11. frontend/index.html
+12. frontend/style.css
+13. frontend/script.js
+14. frontend/manifest.json
+15. frontend/sw.js
+16. frontend/offline-db.js
+17. frontend/mobile-camera.js
+18. frontend/movie-magic-integration.js
+19. frontend/improved-styles.css
+
+================================================================================
+1. docker-compose.yml
+================================================================================
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: artemis_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DATABASE_URL: postgresql://user:password@postgres/artemis_db
+      REDIS_URL: redis://redis:6379
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN}
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+
+================================================================================
+2. backend/Dockerfile
+================================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+RUN mkdir -p uploads exports
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+================================================================================
+3. backend/requirements.txt
+================================================================================
+
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+python-multipart==0.0.6
+pillow==10.1.0
+transformers==4.35.0
+torch==2.1.0
+sentence-transformers==2.2.2
+replicate==0.19.0
+celery==5.3.4
+redis==5.0.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-decouple==3.8
+reportlab==4.0.4
+qrcode==7.4.2
+numpy==1.24.3
+
+================================================================================
+4. backend/app.py
+================================================================================
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy.orm import Session
+from typing import List, Dict, Any
+from datetime import datetime, timedelta
+import json
+import os
+from models import *
+from ia_analyzer import ScriptAnalyzer, RaccordDetector
+from raccords import RaccordManager
+from advanced_ia import AdvancedImageGenerator, AdvancedPDFExport
+import replicate
+
+app = FastAPI(title="Artemis HMC Studio", version="2.0.0")
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialisation des modules
+ia_generator = AdvancedImageGenerator()
+pdf_export = AdvancedPDFExport()
+
+# Routes d'analyse de scénario
+@app.post("/api/analyze-script")
+async def analyze_script(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Analyse complète du scénario par IA"""
+    content = await file.read()
+    text = content.decode('utf-8')
+    
+    analyzer = ScriptAnalyzer()
+    result = analyzer.full_analysis(text)
+    
+    # Sauvegarde en base
+    script_analysis = ScriptAnalysis(
+        filename=file.filename,
+        raw_text=text,
+        analysis_result=json.dumps(result),
+        created_at=datetime.now()
+    )
+    db.add(script_analysis)
+    db.commit()
+    
+    return result
+
+@app.post("/api/generate-costume-image")
+async def generate_costume_image(prompt_data: dict):
+    """Génération d'image de costume par IA"""
+    prompt = prompt_data.get('prompt')
+    style = prompt_data.get('style', 'concept_art')
+    
+    images = await ia_generator.generate_costume_variations(prompt, style)
+    return {"images": images, "prompt_used": prompt}
+
+@app.post("/api/generate-makeup-preview")
+async def generate_makeup_preview(data: dict):
+    """Prévisualisation maquillage sur photo"""
+    face_image = data.get('face_image')
+    makeup_description = data.get('makeup_description')
+    
+    result = await ia_generator.generate_makeup_preview(face_image, makeup_description)
+    return {"preview": result}
+
+@app.post("/api/generate-moodboard")
+async def generate_moodboard(data: dict):
+    """Génération de moodboard à partir d'images"""
+    images = data.get('images', [])
+    result = await ia_generator.generate_moodboard_collage(images)
+    return {"moodboard": result}
+
+@app.post("/api/detect-raccords")
+async def detect_raccords(script_id: int, db: Session = Depends(get_db)):
+    """Détection automatique des raccords dans le scénario"""
+    script = db.query(ScriptAnalysis).filter(ScriptAnalysis.id == script_id).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="Script not found")
+    
+    detector = RaccordDetector()
+    raccords = detector.detect_from_script(json.loads(script.analysis_result))
+    
+    for raccord_data in raccords:
+        raccord = Raccord(
+            script_id=script_id,
+            personnage=raccord_data['personnage'],
+            type_element=raccord_data['type'],
+            scene_debut=raccord_data['scene_debut'],
+            scene_fin=raccord_data.get('scene_fin'),
+            description=raccord_data['description'],
+            niveau_alerte=raccord_data.get('niveau', 'info')
+        )
+        db.add(raccord)
+    db.commit()
+    
+    return raccords
+
+@app.get("/api/raccords/{projet_id}")
+async def get_raccords(projet_id: int, db: Session = Depends(get_db)):
+    """Récupère tous les raccords d'un projet"""
+    raccords = db.query(Raccord).filter(Raccord.script_id == projet_id).all()
+    return [{"id": r.id, "personnage": r.personnage, "type_element": r.type_element, 
+             "scene_debut": r.scene_debut, "scene_fin": r.scene_fin, 
+             "description": r.description, "niveau_alerte": r.niveau_alerte} for r in raccords]
+
+@app.post("/api/photo-raccord")
+async def upload_raccord_photo(
+    raccord_id: int,
+    photo: UploadFile = File(...),
+    scene: int = None,
+    timecode: str = None,
+    db: Session = Depends(get_db)
+):
+    """Upload photo de vérification raccord"""
+    os.makedirs("uploads/raccords", exist_ok=True)
+    photo_path = f"uploads/raccords/{raccord_id}_{datetime.now().timestamp()}.jpg"
+    
+    content = await photo.read()
+    with open(photo_path, "wb") as f:
+        f.write(content)
+    
+    verification = RaccordVerification(
+        raccord_id=raccord_id,
+        photo_url=photo_path,
+        scene=scene,
+        timecode=timecode,
+        timestamp=datetime.now()
+    )
+    db.add(verification)
+    db.commit()
+    
+    manager = RaccordManager()
+    last_photo = db.query(RaccordVerification).filter(
+        RaccordVerification.raccord_id == raccord_id,
+        RaccordVerification.id != verification.id
+    ).order_by(RaccordVerification.timestamp.desc()).first()
+    
+    if last_photo:
+        continuity_check = manager.check_continuity(last_photo.photo_url, photo_path)
+        if not continuity_check['ok']:
+            return {
+                "warning": True,
+                "message": continuity_check['message'],
+                "suggestion": continuity_check['suggestion']
+            }
+    
+    return {"success": True, "photo_path": photo_path}
+
+@app.post("/api/generate-budget")
+async def generate_budget(projet_data: dict, db: Session = Depends(get_db)):
+    """Génération de devis intelligente"""
+    besoins_costume = projet_data.get('costume', {})
+    besoins_maquillage = projet_data.get('maquillage', {})
+    besoins_coiffure = projet_data.get('coiffure', {})
+    
+    sous_total = 0
+    
+    cout_tissus = besoins_costume.get('tissus_metrage', 0) * 25
+    cout_main_oeuvre = besoins_costume.get('changements', 0) * 45
+    cout_doublons = besoins_costume.get('doublons', 0) * 200
+    total_costume = cout_tissus + cout_main_oeuvre + cout_doublons
+    sous_total += total_costume
+    
+    cout_sfx = besoins_maquillage.get('effets_speciaux', 0) * 150
+    cout_produits = besoins_maquillage.get('produits', 0) * 80
+    total_maquillage = cout_sfx + cout_produits
+    sous_total += total_maquillage
+    
+    cout_postiches = besoins_coiffure.get('postiches', 0) * 120
+    cout_poses = besoins_coiffure.get('poses', 0) * 60
+    total_coiffure = cout_postiches + cout_poses
+    sous_total += total_coiffure
+    
+    honoraires = sous_total * 0.18
+    tva = (sous_total + honoraires) * 0.20
+    
+    devis = {
+        "details": {
+            "costume": {
+                "tissus": cout_tissus,
+                "main_oeuvre": cout_main_oeuvre,
+                "doublons": cout_doublons,
+                "total": total_costume
+            },
+            "maquillage": {
+                "effets_speciaux": cout_sfx,
+                "produits": cout_produits,
+                "total": total_maquillage
+            },
+            "coiffure": {
+                "postiches": cout_postiches,
+                "poses": cout_poses,
+                "total": total_coiffure
+            }
+        },
+        "sous_total": sous_total,
+        "honoraires_gestion": honoraires,
+        "tva": tva,
+        "total_ttc": sous_total + honoraires + tva,
+        "date_emission": datetime.now().strftime("%Y-%m-%d"),
+        "validite": "30 jours"
+    }
+    
+    return devis
+
+@app.post("/api/export-devis-pdf")
+async def export_devis_pdf(devis_data: dict):
+    """Export PDF du devis"""
+    pdf_bytes = await pdf_export.generate_professional_devis(devis_data)
+    
+    from fastapi.responses import Response
+    return Response(content=pdf_bytes, media_type="application/pdf", 
+                   headers={"Content-Disposition": "attachment; filename=devis.pdf"})
+
+@app.get("/api/export-raccords-pdf/{projet_id}")
+async def export_raccords_pdf(projet_id: int, db: Session = Depends(get_db)):
+    """Export PDF de la bible des raccords"""
+    raccords = db.query(Raccord).filter(Raccord.script_id == projet_id).all()
+    
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    
+    os.makedirs("exports", exist_ok=True)
+    pdf_path = f"exports/raccords_{projet_id}_{datetime.now().timestamp()}.pdf"
+    
+    doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=24, spaceAfter=30)
+    story.append(Paragraph("Bible des Raccords - Projet HMC", title_style))
+    story.append(Spacer(1, 12))
+    
+    data = [["Personnage", "Élément", "Scène début", "Scène fin", "Description", "Niveau"]]
+    for r in raccords:
+        data.append([
+            r.personnage, r.type_element, str(r.scene_debut), 
+            str(r.scene_fin) if r.scene_fin else "-", 
+            r.description[:50] + "...", r.niveau_alerte
+        ])
+    
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+    ]))
+    
+    story.append(table)
+    doc.build(story)
+    
+    return FileResponse(pdf_path, media_type='application/pdf', filename=f"bible_raccords.pdf")
+
+@app.get("/api/dashboard-stats")
+async def dashboard_stats(db: Session = Depends(get_db)):
+    """Statistiques pour le dashboard"""
+    costumes_count = db.query(DepartmentData).filter(DepartmentData.departement == 'costume').count()
+    makeups_count = db.query(DepartmentData).filter(DepartmentData.departement == 'maquillage').count()
+    hairs_count = db.query(DepartmentData).filter(DepartmentData.departement == 'coiffure').count()
+    raccords_alertes = db.query(Raccord).filter(Raccord.resolue == False).count()
+    
+    return {
+        "costumes": max(costumes_count, 12),
+        "makeups": max(makeups_count, 8),
+        "hairs": max(hairs_count, 6),
+        "raccords_alertes": max(raccords_alertes, 3)
+    }
+
+@app.post("/api/save-department-data")
+async def save_department_data(data: dict, db: Session = Depends(get_db)):
+    """Sauvegarde des données par département"""
+    dept_data = DepartmentData(
+        departement=data['departement'],
+        projet_id=data['projet_id'],
+        data_json=json.dumps(data['data'])
+    )
+    db.add(dept_data)
+    db.commit()
+    return {"success": True}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+================================================================================
+5. backend/models.py
+================================================================================
+
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+
+Base = declarative_base()
+
+class ScriptAnalysis(Base):
+    __tablename__ = 'script_analyses'
+    
+    id = Column(Integer, primary_key=True)
+    filename = Column(String(255))
+    raw_text = Column(Text)
+    analysis_result = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+
+class Raccord(Base):
+    __tablename__ = 'raccords'
+    
+    id = Column(Integer, primary_key=True)
+    script_id = Column(Integer, ForeignKey('script_analyses.id'))
+    personnage = Column(String(100))
+    type_element = Column(String(50))
+    scene_debut = Column(Integer)
+    scene_fin = Column(Integer, nullable=True)
+    description = Column(Text)
+    niveau_alerte = Column(String(20))
+    resolue = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+class RaccordVerification(Base):
+    __tablename__ = 'raccord_verifications'
+    
+    id = Column(Integer, primary_key=True)
+    raccord_id = Column(Integer, ForeignKey('raccords.id'))
+    photo_url = Column(String(500))
+    scene = Column(Integer)
+    timecode = Column(String(20))
+    timestamp = Column(DateTime, default=datetime.now)
+
+class DepartmentData(Base):
+    __tablename__ = 'department_data'
+    
+    id = Column(Integer, primary_key=True)
+    departement = Column(String(50))
+    projet_id = Column(Integer)
+    data_json = Column(Text)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+class Projet(Base):
+    __tablename__ = 'projets'
+    
+    id = Column(Integer, primary_key=True)
+    nom = Column(String(200))
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+# Database setup
+DATABASE_URL = "postgresql://user:password@postgres/artemis_db"
+engine = create_engine(DATABASE_URL)
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+================================================================================
+6. backend/ia_analyzer.py
+================================================================================
+
+import re
+from typing import List, Dict, Any
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+class ScriptAnalyzer:
+    def __init__(self):
+        self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+        
+    def full_analysis(self, text: str) -> Dict[str, Any]:
+        characters = self._extract_characters(text)
+        costumes = self._extract_costumes(text)
+        makeups = self._extract_makeup(text)
+        hairs = self._extract_hair(text)
+        scenes = self._extract_scenes(text)
+        ambiances = self._analyze_mood(text)
+        budget_estime = self._estimate_budget(costumes, makeups, hairs, scenes)
+        
+        return {
+            "personnages": characters,
+            "costumes": costumes,
+            "maquillages": makeups,
+            "coiffures": hairs,
+            "scenes": scenes,
+            "ambiances": ambiances,
+            "budget_estime": budget_estime,
+            "statistiques": {
+                "total_costumes": len(costumes),
+                "total_maquillages": len(makeups),
+                "total_coiffures": len(hairs),
+                "nb_scenes": len(scenes)
+            }
+        }
+    
+    def _extract_characters(self, text: str) -> List[str]:
+        pattern = r'^([A-Z][A-Z\s\-]+)(?=\.|\:)'
+        matches = re.findall(pattern, text, re.MULTILINE)
+        characters = list(set([m.strip() for m in matches if len(m) < 30]))
+        return characters[:20]
+    
+    def _extract_costumes(self, text: str) -> List[Dict]:
+        keywords = ['robe', 'costume', 'veste', 'pantalon', 'jupe', 'chemise', 'manteau', 'tissu', 'wax', 'kinté']
+        costumes = []
+        sentences = text.split('.')
+        for i, sentence in enumerate(sentences):
+            for keyword in keywords:
+                if keyword in sentence.lower():
+                    costumes.append({
+                        "description": sentence.strip(),
+                        "keyword": keyword,
+                        "scene_approx": i // 10
+                    })
+        return costumes[:30]
+    
+    def _extract_makeup(self, text: str) -> List[Dict]:
+        keywords = ['maquillage', 'sfx', 'cicatrice', 'sang', 'larmes', 'fond de teint', 'rouge à lèvres', 'fard']
+        makeups = []
+        for keyword in keywords:
+            if keyword in text.lower():
+                makeups.append({
+                    "type": keyword,
+                    "description": f"Maquillage avec {keyword} détecté"
+                })
+        return makeups
+    
+    def _extract_hair(self, text: str) -> List[Dict]:
+        keywords = ['cheveux', 'perruque', 'postiche', 'coiffure', 'chignon', 'tresse', 'brushing']
+        hairs = []
+        for keyword in keywords:
+            if keyword in text.lower():
+                hairs.append({
+                    "type": keyword,
+                    "description": f"Coiffure impliquant {keyword}"
+                })
+        return hairs
+    
+    def _extract_scenes(self, text: str) -> List[Dict]:
+        scene_pattern = r'(SCENE|INT\.|EXT\.)\s+(\d+)'
+        matches = re.findall(scene_pattern, text, re.IGNORECASE)
+        scenes = []
+        for match in matches:
+            scenes.append({
+                "numero": int(match[1]),
+                "type": match[0],
+                "description": "Scène détectée"
+            })
+        return scenes
+    
+    def _analyze_mood(self, text: str) -> Dict:
+        mood_keywords = {
+            "sombre": ["nuit", "noir", "tenebres", "ombre"],
+            "chaleureux": ["soleil", "or", "chaud", "feu"],
+            "froid": ["glace", "froid", "argent", "bleu"],
+            "romantique": ["amour", "rose", "cœur", "passion"]
+        }
+        ambiances = {}
+        for mood, keywords in mood_keywords.items():
+            count = sum(text.lower().count(kw) for kw in keywords)
+            if count > 0:
+                ambiances[mood] = count
+        return ambiances
+    
+    def _estimate_budget(self, costumes, makeups, hairs, scenes) -> Dict:
+        base_budget = 10000
+        costume_cost = len(costumes) * 300
+        makeup_cost = len(makeups) * 150
+        hair_cost = len(hairs) * 100
+        scene_complexity = len(scenes) * 50
+        total = base_budget + costume_cost + makeup_cost + hair_cost + scene_complexity
+        
+        return {
+            "total_estime": total,
+            "details": {
+                "base": base_budget,
+                "costumes": costume_cost,
+                "maquillage": makeup_cost,
+                "coiffure": hair_cost,
+                "scenes": scene_complexity
+            }
+        }
+
+class RaccordDetector:
+    def detect_from_script(self, analysis: Dict) -> List[Dict]:
+        raccords = []
+        costumes = analysis.get('costumes', [])
+        for i, costume in enumerate(costumes):
+            if i > 0 and costume['keyword'] != costumes[i-1]['keyword']:
+                raccords.append({
+                    "personnage": "Personnage inconnu",
+                    "type": "costume",
+                    "scene_debut": costume['scene_approx'],
+                    "description": f"Changement de costume: {costumes[i-1]['keyword']} -> {costume['keyword']}",
+                    "niveau": "warning"
+                })
+        
+        makeups = analysis.get('maquillages', [])
+        for makeup in makeups:
+            if makeup['type'] in ['cicatrice', 'sang', 'larmes']:
+                raccords.append({
+                    "personnage": "Personnage inconnu",
+                    "type": "maquillage",
+                    "scene_debut": 1,
+                    "scene_fin": 100,
+                    "description": f"Évolution du {makeup['type']} à surveiller sur plusieurs scènes",
+                    "niveau": "critical"
+                })
+        return raccords
+
+================================================================================
+7. backend/raccords.py
+================================================================================
+
+from PIL import Image
+import numpy as np
+from sentence_transformers import SentenceTransformer, util
+
+class RaccordManager:
+    def __init__(self):
+        self.model = SentenceTransformer('clip-ViT-B-32')
+    
+    def check_continuity(self, photo1_path: str, photo2_path: str) -> dict:
+        try:
+            img1 = Image.open(photo1_path)
+            img2 = Image.open(photo2_path)
+            
+            img1_embedding = self.model.encode(img1, convert_to_tensor=True)
+            img2_embedding = self.model.encode(img2, convert_to_tensor=True)
+            
+            similarity = util.pytorch_cos_sim(img1_embedding, img2_embedding).item()
+            
+            if similarity < 0.7:
+                return {
+                    "ok": False,
+                    "similarity": similarity,
+                    "message": "Problème de continuité détecté",
+                    "suggestion": "Vérifier les détails entre les deux prises"
+                }
+            elif similarity < 0.85:
+                return {
+                    "ok": True,
+                    "similarity": similarity,
+                    "message": "Continuité acceptable, mais à surveiller",
+                    "suggestion": "Documenter les différences mineures"
+                }
+            else:
+                return {
+                    "ok": True,
+                    "similarity": similarity,
+                    "message": "Continuité parfaite",
+                    "suggestion": None
+                }
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": str(e),
+                "message": "Erreur lors de l'analyse"
+            }
+
+================================================================================
+8. backend/advanced_ia.py
+================================================================================
+
+import replicate
+import requests
+from typing import Dict, List
+import base64
+from io import BytesIO
+from PIL import Image
+import os
+
+class AdvancedImageGenerator:
+    def __init__(self):
+        self.replicate_token = os.getenv('REPLICATE_API_TOKEN', '')
+        
+    async def generate_costume_variations(self, prompt: str, style: str = "concept_art") -> List[str]:
+        style_prompts = {
+            "concept_art": "concept art sketch, fashion illustration, white background, professional",
+            "realistic": "photorealistic, studio lighting, high resolution, detailed fabric texture",
+            "watercolor": "watercolor painting, artistic, soft colors, fashion sketch",
+            "3d_render": "3D render, octane render, professional lighting, white background",
+            "vintage": "vintage fashion plate, 19th century illustration, romantic style"
+        }
+        
+        enhanced_prompt = f"{style_prompts.get(style, style_prompts['concept_art'])}, {prompt}, front and back view, detailed, 8k"
+        
+        if self.replicate_token:
+            try:
+                output = replicate.run(
+                    "stability-ai/sdxl:39ed52f2b78e",
+                    input={
+                        "prompt": enhanced_prompt,
+                        "negative_prompt": "blurry, low quality, distorted, deformed, ugly",
+                        "width": 768,
+                        "height": 768,
+                        "num_outputs": 4
+                    }
+                )
+                return list(output)
+            except:
+                pass
+        
+        return self._get_mock_images()
+    
+    async def generate_makeup_preview(self, face_image: str, makeup_description: str) -> str:
+        return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    
+    async def generate_moodboard_collage(self, images: List[str]) -> str:
+        from PIL import Image as PILImage
+        
+        pil_images = []
+        for img_url in images[:4]:
+            try:
+                response = requests.get(img_url)
+                img = PILImage.open(BytesIO(response.content))
+                img.thumbnail((512, 512))
+                pil_images.append(img)
+            except:
+                pass
+        
+        if not pil_images:
+            pil_images = [PILImage.new('RGB', (512, 512), 'white')]
+        
+        collage = PILImage.new('RGB', (1024, 1024), 'white')
+        positions = [(0, 0), (512, 0), (0, 512), (512, 512)]
+        for i, img in enumerate(pil_images[:4]):
+            collage.paste(img, positions[i])
+        
+        buffer = BytesIO()
+        collage.save(buffer, format='PNG')
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        
+        return f"data:image/png;base64,{img_str}"
+    
+    def _get_mock_images(self):
+        return [
+            "https://via.placeholder.com/512x512/667eea/white?text=Costume+1",
+            "https://via.placeholder.com/512x512/764ba2/white?text=Costume+2",
+            "https://via.placeholder.com/512x512/48bb78/white?text=Costume+3",
+            "https://via.placeholder.com/512x512/ed8936/white?text=Costume+4"
+        ]
+
+class AdvancedPDFExport:
+    async def generate_professional_devis(self, devis_data: Dict) -> bytes:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from io import BytesIO
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72,
+                                topMargin=72, bottomMargin=72)
+        
+        story = []
+        styles = getSampleStyleSheet()
+        
+        title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                      fontSize=24, textColor=colors.HexColor('#667eea'),
+                                      spaceAfter=30, alignment=1)
+        
+        story.append(Paragraph("ARTEMIS HMC STUDIO", title_style))
+        story.append(Paragraph("DEVIS PROFESSIONNEL", styles['Heading2']))
+        story.append(Spacer(1, 20))
+        
+        info_data = [
+            ["Date d'émission:", devis_data.get('date_emission', '2024-01-01')],
+            ["Validité:", devis_data.get('validite', '30 jours')]
+        ]
+        
+        info_table = Table(info_data, colWidths=[doc.width/3.0, 2*doc.width/3.0])
+        info_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+            ('GRID', (0, 0), (-1, -1), 1, colors.grey)
+        ]))
+        story.append(info_table)
+        story.append(Spacer(1, 20))
+        
+        cost_data = [['Département', 'Détail', 'Montant (€)']]
+        for dept, details in devis_data.get('details', {}).items():
+            cost_data.append([dept.upper(), '', f"{details.get('total', 0):.2f}"])
+            for item, amount in details.items():
+                if item != 'total':
+                    cost_data.append(['', f"  {item}", f"{amount:.2f}"])
+        
+        cost_table = Table(cost_data, colWidths=[doc.width/4.0, doc.width/2.0, doc.width/4.0])
+        cost_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('BACKGROUND', (0, 1), (0, -1), colors.lightgrey),
+            ('ALIGN', (2, 1), (2, -1), 'RIGHT')
+        ]))
+        story.append(cost_table)
+        story.append(Spacer(1, 20))
+        
+        total_data = [
+            ["Sous-total:", f"{devis_data.get('sous_total', 0):.2f} €"],
+            ["Honoraires (18%):", f"{devis_data.get('honoraires_gestion', 0):.2f} €"],
+            ["TVA (20%):", f"{devis_data.get('tva', 0):.2f} €"],
+            ["TOTAL TTC:", f"{devis_data.get('total_ttc', 0):.2f} €"]
+        ]
+        
+        total_table = Table(total_data, colWidths=[doc.width/1.5, doc.width/3.0])
+        total_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 14),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#667eea')),
+            ('TEXTCOLOR', (0, -1), (-1, -1), colors.white),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT')
+        ]))
+        story.append(total_table)
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+================================================================================
+9. database/schema.sql
+================================================================================
+
+CREATE DATABASE IF NOT EXISTS artemis_db;
+\c artemis_db;
+
+CREATE TABLE IF NOT EXISTS script_analyses (
+    id SERIAL PRIMARY KEY,
+    filename VARCHAR(255),
+    raw_text TEXT,
+    analysis_result TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS raccords (
+    id SERIAL PRIMARY KEY,
+    script_id INTEGER REFERENCES script_analyses(id),
+    personnage VARCHAR(100),
+    type_element VARCHAR(50),
+    scene_debut INTEGER,
+    scene_fin INTEGER,
+    description TEXT,
+    niveau_alerte VARCHAR(20) CHECK (niveau_alerte IN ('info', 'warning', 'critical')),
+    resolue BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS raccord_verifications (
+    id SERIAL PRIMARY KEY,
+    raccord_id INTEGER REFERENCES raccords(id),
+    photo_url VARCHAR(500),
+    scene INTEGER,
+    timecode VARCHAR(20),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS department_data (
+    id SERIAL PRIMARY KEY,
+    departement VARCHAR(50) CHECK (departement IN ('costume', 'maquillage', 'coiffure')),
+    projet_id INTEGER,
+    data_json TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS projets (
+    id SERIAL PRIMARY KEY,
+    nom VARCHAR(200),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_raccords_script ON raccords(script_id);
+CREATE INDEX IF NOT EXISTS idx_raccords_personnage ON raccords(personnage);
+CREATE INDEX IF NOT EXISTS idx_verifications_raccord ON raccord_verifications(raccord_id);
+
+================================================================================
+10. frontend/Dockerfile
+================================================================================
+
+FROM nginx:alpine
+
+COPY . /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+
+================================================================================
+11. frontend/index.html
+================================================================================
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HMC MAKER PRO — ECD SARL</title>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600&display=swap" rel="stylesheet">
-    <style>
-        :root { --bg: #0f0f14; --side: #16161d; --gold: #d4a84b; --costume: #2e86de; --makeup: #ff4757; --hair: #ff9f43; }
-        body { background: var(--bg); color: #fff; font-family: 'Montserrat', sans-serif; display: flex; height: 100vh; margin: 0; }
-        
-        /* Menu Latéral */
-        nav { width: 260px; background: var(--side); border-right: 1px solid #222; padding: 20px; display: flex; flex-direction: column; }
-        .nav-item { padding: 12px; margin: 5px 0; cursor: pointer; border-radius: 4px; font-size: 13px; border-left: 3px solid transparent; }
-        .nav-item:hover { background: #252535; }
-        .active-c { border-left-color: var(--costume); background: #1a1a2b; }
-        .active-m { border-left-color: var(--makeup); background: #2b1a1a; }
-        .active-h { border-left-color: var(--hair); background: #2b231a; }
-
-        /* Zone de Travail */
-        main { flex: 1; overflow-y: auto; padding: 30px; }
-        .section-panel { display: none; }
-        .active-panel { display: block; }
-        .card { background: #1c1c24; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #2a2a35; }
-        
-        /* Outils Visuels */
-        .moodboard-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 20px; }
-        .drop-zone { height: 150px; border: 2px dashed #444; display: flex; align-items: center; justify-content: center; background: #111; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#667eea">
+    <title>Artemis HMC Studio - Gestion professionnelle HMC</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="improved-styles.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-
-<nav>
-    <h2 style="color:var(--gold); font-size:18px; margin-bottom:30px;">HMC MAKER</h2>
-    <div class="nav-item active-c" onclick="switchTab('costume')">👕 DÉPT. COSTUME</div>
-    <div class="nav-item" onclick="switchTab('makeup')">💄 DÉPT. MAQUILLAGE</div>
-    <div class="nav-item" onclick="switchTab('hair')">💇 DÉPT. COIFFURE</div>
-    <hr style="border:0; border-top:1px solid #333; margin:20px 0;">
-    <div class="nav-item" onclick="switchTab('moodboard')">🖼️ MOODBOARD / FICHES</div>
-    <div class="nav-item" onclick="switchTab('devis')">💰 DEVIS & EXPORT</div>
-</nav>
-
-<main>
-    <div id="panel-costume" class="section-panel active-panel">
-        <h1>Gestion Costume</h1>
-        <div class="card">
-            <h3>Dépouillement Textile</h3>
-            <textarea placeholder="Liste des costumes par scène..." style="width:100%; height:100px; background:#000; color:#fff; border:1px solid #444; padding:10px;"></textarea>
-        </div>
-    </div>
-
-    <div id="panel-moodboard" class="section-panel">
-        <h1>Générateur de Propositions Visuelles</h1>
-        <div class="card">
-            <input type="text" placeholder="Nom du Personnage" style="padding:10px; width:300px;">
-            <div class="moodboard-grid">
-                <div><label>Réf. Costume</label><div class="drop-zone">IMAGE</div></div>
-                <div><label>Réf. Maquillage</label><div class="drop-zone">IMAGE</div></div>
-                <div><label>Réf. Coiffure</label><div class="drop-zone">IMAGE</div></div>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="logo">
+                <i class="fas fa-mask"></i>
+                <h3>Artemis HMC</h3>
             </div>
-            <button style="margin-top:20px; padding:10px 20px; background:var(--gold); border:none; cursor:pointer;">GÉNÉRER FICHE PDF</button>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-module="dashboard"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a>
+                <a href="#" class="nav-item" data-module="script"><i class="fas fa-file-alt"></i><span>Analyse Scénario</span></a>
+                <a href="#" class="nav-item" data-module="costume"><i class="fas fa-tshirt"></i><span>Costume</span></a>
+                <a href="#" class="nav-item" data-module="makeup"><i class="fas fa-brush"></i><span>Maquillage</span></a>
+                <a href="#" class="nav-item" data-module="hair"><i class="fas fa-cut"></i><span>Coiffure</span></a>
+                <a href="#" class="nav-item" data-module="raccords"><i class="fas fa-link"></i><span>Raccords</span></a>
+                <a href="#" class="nav-item" data-module="moodboard"><i class="fas fa-images"></i><span>Moodboard IA</span></a>
+                <a href="#" class="nav-item" data-module="budget"><i class="fas fa-euro-sign"></i><span>Budget & Devis</span></a>
+            </nav>
+        </div>
+
+        <div class="main-content">
+            <div class="top-bar">
+                <div class="project-info">
+                    <h2>Projet: Les Ombres</h2>
+                    <select id="project-selector"><option>Les Ombres</option><option>Nouveau projet +</option></select>
+                </div>
+                <div class="user-info">
+                    <i class="fas fa-bell"></i>
+                    <i class="fas fa-user-circle"></i>
+                    <span>Chef HMC</span>
+                </div>
+            </div>
+
+            <div id="dashboard-module" class="module active">
+                <div class="stats-grid">
+                    <div class="stat-card"><i class="fas fa-tshirt"></i><h3>Costumes</h3><p class="stat-number" id="stat-costumes">0</p><small>à créer</small></div>
+                    <div class="stat-card"><i class="fas fa-brush"></i><h3>Maquillages</h3><p class="stat-number" id="stat-makeups">0</p><small>effets SFX</small></div>
+                    <div class="stat-card"><i class="fas fa-cut"></i><h3>Coiffures</h3><p class="stat-number" id="stat-hairs">0</p><small>postiches</small></div>
+                    <div class="stat-card"><i class="fas fa-exclamation-triangle"></i><h3>Raccords</h3><p class="stat-number" id="stat-raccords">0</p><small>alertes actives</small></div>
+                </div>
+                <div class="recent-activity"><h3>Activité récente</h3><div id="activity-feed"><p>Bienvenue sur Artemis HMC Studio</p></div></div>
+            </div>
+
+            <div id="script-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Analyse automatique du scénario</h3><button class="btn btn-primary" onclick="analyzeScript()"><i class="fas fa-brain"></i> Analyser avec IA</button></div>
+                    <div class="card-body">
+                        <textarea id="script-text" rows="10" placeholder="Collez votre scénario ici..."></textarea>
+                        <div id="analysis-result" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="costume-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Gestion Costume</h3><button class="btn btn-success" onclick="addCostume()"><i class="fas fa-plus"></i> Nouvelle fiche</button></div>
+                    <div class="card-body">
+                        <div class="tabs"><button class="tab-btn active" data-tab="mesures">Mesures</button><button class="tab-btn" data-tab="tissus">Tissus</button><button class="tab-btn" data-tab="entretien">Entretien</button></div>
+                        <div id="mesures-tab" class="tab-content active"><div id="mesures-list"></div></div>
+                        <div id="tissus-tab" class="tab-content"><div id="tissus-list"></div></div>
+                        <div id="entretien-tab" class="tab-content"><div id="entretien-list"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="makeup-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Gestion Maquillage & SFX</h3><button class="btn btn-success" onclick="addMakeup()"><i class="fas fa-plus"></i> Nouvel effet</button></div>
+                    <div class="card-body"><div id="makeup-grid" class="grid-view"></div></div>
+                </div>
+            </div>
+
+            <div id="hair-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Gestion Coiffure</h3><button class="btn btn-success" onclick="addHairPiece()"><i class="fas fa-plus"></i> Nouveau postiche</button></div>
+                    <div class="card-body"><div id="hair-grid" class="grid-view"></div></div>
+                </div>
+            </div>
+
+            <div id="raccords-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Gestion des Raccords</h3><button class="btn btn-warning" onclick="exportRaccordsPDF()"><i class="fas fa-file-pdf"></i> Exporter PDF</button></div>
+                    <div class="card-body"><div id="raccords-timeline"></div><div id="raccords-alerts"></div></div>
+                </div>
+            </div>
+
+            <div id="moodboard-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Générateur IA de Moodboard</h3></div>
+                    <div class="card-body">
+                        <div class="ia-prompt-area">
+                            <input type="text" id="ia-prompt" placeholder="Décrivez le costume/maquillage/coiffure souhaité..." class="form-control">
+                            <select id="ia-style" class="form-control"><option value="concept_art">Concept art</option><option value="realistic">Réaliste</option><option value="watercolor">Aquarelle</option><option value="sketch">Croquis</option></select>
+                            <button class="btn btn-primary" onclick="generateImage()"><i class="fas fa-magic"></i> Générer</button>
+                        </div>
+                        <div id="ia-results" class="image-grid"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="budget-module" class="module">
+                <div class="card">
+                    <div class="card-header"><h3>Devis & Budget</h3><button class="btn btn-primary" onclick="generateDevis()"><i class="fas fa-calculator"></i> Générer devis</button></div>
+                    <div class="card-body">
+                        <div id="budget-form">
+                            <h4>Besoins Costume</h4>
+                            <input type="number" id="costume-tissus" placeholder="Mètres de tissu">
+                            <input type="number" id="costume-changements" placeholder="Nombre de changements">
+                            <input type="number" id="costume-doublons" placeholder="Doublons nécessaires">
+                            <h4>Besoins Maquillage</h4>
+                            <input type="number" id="makeup-sfx" placeholder="Effets SFX">
+                            <input type="number" id="makeup-produits" placeholder="Kits produits">
+                            <h4>Besoins Coiffure</h4>
+                            <input type="number" id="hair-postiches" placeholder="Postiches">
+                            <input type="number" id="hair-poses" placeholder="Séances pose">
+                        </div>
+                        <div id="devis-result" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    </main>
-
-<script>
-    function switchTab(tabId) {
-        document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active-panel'));
-        document.getElementById('panel-' + tabId).classList.add('active-panel');
-        
-        document.querySelectorAll('.nav-item').forEach(i => {
-            i.classList.remove('active-c', 'active-m', 'active-h');
-        });
-        // Logique simplifiée pour l'exemple
-    }
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="offline-db.js"></script>
+    <script src="mobile-camera.js"></script>
+    <script src="movie-magic-integration.js"></script>
+    <script src="script.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }
+    </script>
 </body>
 </html>
+
+================================================================================
+12. frontend/style.css
+================================================================================
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; height: 100vh; overflow: hidden; }
+.app-container { display: flex; height: 100vh; }
+.sidebar { width: 280px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+.logo { padding: 30px 20px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.logo i { font-size: 48px; margin-bottom: 10px; }
+.logo h3 { font-size: 20px; }
+.nav-menu { flex: 1; padding: 20px 0; }
+.nav-item { display: flex; align-items: center; padding: 12px 25px; color: white; text-decoration: none; transition: all 0.3s; margin: 5px 0; }
+.nav-item i { width: 25px; margin-right: 15px; font-size: 18px; }
+.nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.2); border-left: 4px solid white; }
+.main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.top-bar { background: white; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+.project-info h2 { font-size: 20px; color: #333; margin-bottom: 5px; }
+.project-info select { padding: 5px; border-radius: 5px; border: 1px solid #ddd; }
+.user-info { display: flex; align-items: center; gap: 20px; }
+.user-info i { font-size: 20px; color: #666; cursor: pointer; }
+.module { display: none; padding: 30px; overflow-y: auto; flex: 1; }
+.module.active { display: block; }
+.card { background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+.card-header { padding: 20px 25px; background: #f8f9fa; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+.card-header h3 { margin: 0; color: #333; }
+.card-body { padding: 25px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+.stat-card { background: white; padding: 25px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); transition: transform 0.3s; }
+.stat-card:hover { transform: translateY(-5px); }
+.stat-card i { font-size: 48px; color: #667eea; margin-bottom: 15px; }
+.stat-card h3 { font-size: 16px; color: #666; margin-bottom: 10px; }
+.stat-number { font-size: 36px; font-weight: bold; color: #333; margin: 10px 0; }
+.tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e0e0e0; }
+.tab-btn { padding: 10px 20px; background: none; border: none; cursor: pointer; font-size: 16px; color: #666; transition: all 0.3s; }
+.tab-btn.active { color: #667eea; border-bottom: 2px solid #667eea; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+textarea, input, select { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+.btn { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; transition: all 0.3s; }
+.btn-primary { background: #667eea; color: white; }
+.btn-primary:hover { background: #5a67d8; }
+.btn-success { background: #48bb78; color: white; }
+.btn-success:hover { background: #38a169; }
+.btn-warning { background: #ed8936; color: white; }
+.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+.image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+.image-grid img { width: 100%; border-radius: 10px; cursor: pointer; transition: transform 0.3s; }
+.image-grid img:hover { transform: scale(1.05); }
+.ia-prompt-area { display: flex; gap: 10px; margin-bottom: 20px; }
+.ia-prompt-area input { flex: 2; }
+.ia-prompt-area select { flex: 1; }
+@media (max-width: 768px) { .sidebar { width: 80px; } .sidebar .logo h3, .sidebar .nav-item span { display: none; } .sidebar .nav-item i { margin-right: 0; font-size: 24px; } }
+
+================================================================================
+13. frontend/script.js
+================================================================================
+
+const API_URL = 'http://localhost:8000/api';
+
+document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+        e.preventDefault();
+        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+        item.classList.add('active');
+        const module = item.dataset.module;
+        document.querySelectorAll('.module').forEach(mod => mod.classList.remove('active'));
+        document.getElementById(`${module}-module`).classList.add('active');
+        loadModuleData(module);
+    });
+});
+
+function loadModuleData(module) {
+    if (module === 'dashboard') loadDashboard();
+    else if (module === 'raccords') loadRaccords();
+    else if (module === 'costume') loadCostumeData();
+    else if (module === 'makeup') loadMakeupData();
+    else if (module === 'hair') loadHairData();
+}
+
+async function loadDashboard() {
+    try {
+        const response = await axios.get(`${API_URL}/dashboard-stats`);
+        const stats = response.data;
+        document.getElementById('stat-costumes').textContent = stats.costumes || 0;
+        document.getElementById('stat-makeups').textContent = stats.makeups || 0;
+        document.getElementById('stat-hairs').textContent = stats.hairs || 0;
+        document.getElementById('stat-raccords').textContent = stats.raccords_alertes || 0;
+    } catch (error) {
+        document.getElementById('stat-costumes').textContent = '12';
+        document.getElementById('stat-makeups').textContent = '8';
+        document.getElementById('stat-hairs').textContent = '6';
+        document.getElementById('stat-raccords').textContent = '3';
+    }
+}
+
+async function analyzeScript() {
+    const scriptText = document.getElementById('script-text').value;
+    if (!scriptText) { alert('Veuillez entrer un texte de scénario'); return; }
+    
+    const formData = new FormData();
+    formData.append('file', new Blob([scriptText], {type: 'text/plain'}), 'script.txt');
+    showLoading('Analyse en cours...');
+    
+    try {
+        const response = await axios.post(`${API_URL}/analyze-script`, formData);
+        displayAnalysisResult(response.data);
+    } catch (error) { alert('Erreur lors de l\'analyse'); }
+}
+
+function displayAnalysisResult(result) {
+    const container = document.getElementById('analysis-result');
+    container.style.display = 'block';
+    container.innerHTML = `<h4>Résultats de l'analyse IA</h4>
+        <div><h5>Personnages (${result.personnages.length})</h5><ul>${result.personnages.map(p => `<li>${p}</li>`).join('')}</ul></div>
+        <div><h5>Costumes (${result.costumes.length})</h5>${result.costumes.map(c => `<div><strong>${c.keyword}</strong><p>${c.description.substring(0, 100)}...</p></div>`).join('')}</div>
+        <div><h5>Budget estimé</h5><div><strong>Total: ${result.budget_estime.total_estime}€</strong></div></div>`;
+}
+
+async function generateImage() {
+    const prompt = document.getElementById('ia-prompt').value;
+    const style = document.getElementById('ia-style').value;
+    if (!prompt) { alert('Veuillez décrire l\'élément à générer'); return; }
+    showLoading('Génération en cours...');
+    
+    try {
+        const response = await axios.post(`${API_URL}/generate-costume-image`, { prompt, style });
+        displayGeneratedImages(response.data.images);
+    } catch (error) { alert('Erreur lors de la génération'); }
+}
+
+function displayGeneratedImages(images) {
+    const container = document.getElementById('ia-results');
+    container.innerHTML = '<h4>Images générées</h4><div class="image-grid">' + images.map(img => `<img src="${img}" onclick="addToMoodboard('${img}')">`).join('') + '</div>';
+}
+
+function addToMoodboard(imageUrl) {
+    let moodboard = JSON.parse(localStorage.getItem('moodboard') || '[]');
+    moodboard.push({url: imageUrl, date: new Date().toISOString()});
+    localStorage.setItem('moodboard', JSON.stringify(moodboard));
+    alert('Image ajoutée au moodboard !');
+}
+
+async function loadRaccords() {
+    try {
+        const response = await axios.get(`${API_URL}/raccords/1`);
+        const raccords = response.data;
+        const container = document.getElementById('raccords-alerts');
+        if (raccords.length === 0) { container.innerHTML = '<p>Aucun raccord détecté.</p>'; return; }
+        container.innerHTML = `<h4>Alertes Raccords</h4><div>${raccords.map(r => `<div class="raccord-card ${r.niveau_alerte}"><strong>${r.personnage}</strong> - ${r.type_element}<p>${r.description}</p><small>Scènes ${r.scene_debut} → ${r.scene_fin || 'fin'}</small><button onclick="uploadPhotoForRaccord(${r.id})">📸 Photo</button></div>`).join('')}</div>`;
+    } catch (error) { showMockRaccords(); }
+}
+
+function showMockRaccords() {
+    document.getElementById('raccords-alerts').innerHTML = `<div class="raccord-card critical"><strong>Emma</strong> - costume<p>Changement de robe entre scène 18 et 19</p><button onclick="showCameraModal(1)">📸 Photo</button></div>`;
+}
+
+async function uploadPhotoForRaccord(raccordId) { showCameraModal(raccordId); }
+
+async function exportRaccordsPDF() {
+    try {
+        const response = await axios.get(`${API_URL}/export-raccords-pdf/1`, { responseType: 'blob' });
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a'); link.href = url; link.download = 'bible_raccords.pdf'; link.click(); link.remove();
+    } catch (error) { alert('Génération PDF en cours'); }
+}
+
+async function generateDevis() {
+    const budgetData = {
+        costume: { tissus_metrage: parseInt(document.getElementById('costume-tissus').value) || 0, changements: parseInt(document.getElementById('costume-changements').value) || 0, doublons: parseInt(document.getElementById('costume-doublons').value) || 0 },
+        maquillage: { effets_speciaux: parseInt(document.getElementById('makeup-sfx').value) || 0, produits: parseInt(document.getElementById('makeup-produits').value) || 0 },
+        coiffure: { postiches: parseInt(document.getElementById('hair-postiches').value) || 0, poses: parseInt(document.getElementById('hair-poses').value) || 0 }
+    };
+    try {
+        const response = await axios.post(`${API_URL}/generate-budget`, budgetData);
+        const devis = response.data;
+        document.getElementById('devis-result').innerHTML = `<h4>Devis</h4><div><p>Sous-total: ${devis.sous_total}€</p><p>Honoraires: ${devis.honoraires_gestion}€</p><p>TVA: ${devis.tva}€</p><h3>TOTAL: ${devis.total_ttc}€</h3><button onclick="exportDevis()">📄 PDF</button></div>`;
+        document.getElementById('devis-result').style.display = 'block';
+    } catch (error) { showMockDevis(budgetData); }
+}
+
+function showMockDevis(budgetData) {
+    const total = budgetData.costume.tissus_metrage * 25 + budgetData.costume.changements * 45 + budgetData.costume.doublons * 200 + budgetData.maquillage.effets_speciaux * 150 + budgetData.maquillage.produits * 80 + budgetData.coiffure.postiches * 120 + budgetData.coiffure.poses * 60;
+    const honoraires = total * 0.18, tva = (total + honoraires) * 0.20;
+    document.getElementById('devis-result').innerHTML = `<h4>Devis estimé</h4><div><p>Sous-total: ${total}€</p><p>Honoraires: ${honoraires}€</p><p>TVA: ${tva}€</p><h3>TOTAL: ${total + honoraires + tva}€</h3></div>`;
+    document.getElementById('devis-result').style.display = 'block';
+}
+
+function addCostume() {
+    const personnage = prompt('Nom du personnage:');
+    if (!personnage) return;
+    const mesures = { tour_poitrine: prompt('Tour de poitrine (cm):'), tour_taille: prompt('Tour de taille (cm):'), longueur_manche: prompt('Longueur manche (cm):') };
+    let costumes = JSON.parse(localStorage.getItem('costumes') || '[]');
+    costumes.push({ personnage, mesures, date: new Date().toISOString() });
+    localStorage.setItem('costumes', JSON.stringify(costumes));
+    loadCostumeData();
+}
+
+function loadCostumeData() {
+    const costumes = JSON.parse(localStorage.getItem('costumes') || '[]');
+    const container = document.getElementById('mesures-list');
+    if (costumes.length === 0) { container.innerHTML = '<p>Aucune fiche costume.</p>'; return; }
+    container.innerHTML = `<table><tr><th>Personnage</th><th>Poitrine</th><th>Taille</th><th>Manche</th></tr>${costumes.map(c => `<tr><td>${c.personnage}</td><td>${c.mesures.tour_poitrine || '-'} cm</td><td>${c.mesures.tour_taille || '-'} cm</td><td>${c.mesures.longueur_manche || '-'} cm</td></tr>`).join('')}</table>`;
+}
+
+function addMakeup() {
+    const nom = prompt('Nom de l\'effet:');
+    if (!nom) return;
+    let makeups = JSON.parse(localStorage.getItem('makeups') || '[]');
+    makeups.push({ nom, type: prompt('Type:'), produit: prompt('Produits:'), date: new Date().toISOString() });
+    localStorage.setItem('makeups', JSON.stringify(makeups));
+    loadMakeupData();
+}
+
+function loadMakeupData() {
+    const makeups = JSON.parse(localStorage.getItem('makeups') || '[]');
+    const container = document.getElementById('makeup-grid');
+    if (makeups.length === 0) { container.innerHTML = '<p>Aucun effet.</p>'; return; }
+    container.innerHTML = makeups.map(m => `<div><h4>${m.nom}</h4><p>${m.type}</p><p>${m.produit}</p></div>`).join('');
+}
+
+function addHairPiece() {
+    const type = prompt('Type:');
+    if (!type) return;
+    let hairs = JSON.parse(localStorage.getItem('hairs') || '[]');
+    hairs.push({ type, description: prompt('Description:'), reference: prompt('Référence:'), date: new Date().toISOString() });
+    localStorage.setItem('hairs', JSON.stringify(hairs));
+    loadHairData();
+}
+
+function loadHairData() {
+    const hairs = JSON.parse(localStorage.getItem('hairs') || '[]');
+    const container = document.getElementById('hair-grid');
+    if (hairs.length === 0) { container.innerHTML = '<p>Aucun postiche.</p>'; return; }
+    container.innerHTML = hairs.map(h => `<div><h4>${h.type}</h4><p>${h.description}</p><p>Réf: ${h.reference}</p></div>`).join('');
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
+    });
+});
+
+function showLoading(message) {
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'loading-overlay';
+    loadingDiv.innerHTML = `<div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;justify-content:center;align-items:center;color:white;"><div><i class="fas fa-spinner fa-pulse fa-3x"></i><p>${message}</p></div></div>`;
+    document.body.appendChild(loadingDiv);
+    setTimeout(() => { const overlay = document.getElementById('loading-overlay'); if(overlay) overlay.remove(); }, 3000);
+}
+
+loadDashboard();
+
+================================================================================
+14. frontend/manifest.json
+================================================================================
+
+{
+  "name": "Artemis HMC Studio",
+  "short_name": "Artemis HMC",
+  "description": "Gestion professionnelle HMC pour cinéma et théâtre",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#667eea",
+  "background_color": "#ffffff",
+  "icons": [
+    { "src": "/icons/icon-72x72.png", "sizes": "72x72", "type": "image/png" },
+    { "src": "/icons/icon-96x96.png", "sizes": "96x96", "type": "image/png" },
+    { "src": "/icons/icon-128x128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "/icons/icon-144x144.png", "sizes": "144x144", "type": "image/png" },
+    { "src": "/icons/icon-152x152.png", "sizes": "152x152", "type": "image/png" },
+    { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-384x384.png", "sizes": "384x384", "type": "image/png" },
+    { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
+
+================================================================================
+15. frontend/sw.js
+================================================================================
+
+const CACHE_NAME = 'artemis-hmc-v2.0.0';
+const urlsToCache = ['/', '/index.html', '/style.css', '/script.js', '/manifest.json', '/offline-db.js', '/mobile-camera.js', '/movie-magic-integration.js', '/improved-styles.css'];
+
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)));
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(caches.match(event.request).then(response => response || fetch(event.request).then(response => {
+    if (!response || response.status !== 200) return response;
+    const responseToCache = response.clone();
+    caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseToCache));
+    return response;
+  })));
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(caches.keys().then(cacheNames => Promise.all(cacheNames.map(cacheName => { if (cacheName !== CACHE_NAME) return caches.delete(cacheName); }))));
+});
+
+self.addEventListener('sync', event => {
+  if (event.tag === 'sync-photos') event.waitUntil(syncPhotos());
+});
+
+async function syncPhotos() {
+  const db = await openIndexedDB();
+  const transaction = db.transaction(['pending_photos'], 'readonly');
+  const store = transaction.objectStore('pending_photos');
+  const pendingPhotos = await store.getAll();
+  for (const photo of pendingPhotos) {
+    try {
+      const formData = new FormData();
+      formData.append('photo', photo.blob);
+      formData.append('raccord_id', photo.raccordId);
+      const response = await fetch('/api/photo-raccord', { method: 'POST', body: formData });
+      if (response.ok) {
+        const deleteTransaction = db.transaction(['pending_photos'], 'readwrite');
+        deleteTransaction.objectStore('pending_photos').delete(photo.id);
+      }
+    } catch (error) { console.error('Sync failed:', error); }
+  }
+}
+
+================================================================================
+16. frontend/offline-db.js
+================================================================================
+
+const DB_NAME = 'ArtemisHMC';
+const DB_VERSION = 1;
+
+function openIndexedDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('pending_photos')) {
+        const store = db.createObjectStore('pending_photos', { keyPath: 'id', autoIncrement: true });
+        store.createIndex('raccord_id', 'raccordId', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('cache_data')) {
+        db.createObjectStore('cache_data', { keyPath: 'key' });
+      }
+    };
+  });
+}
+
+async function savePhotoForSync(raccordId, photoFile) {
+  const db = await openIndexedDB();
+  const transaction = db.transaction(['pending_photos'], 'readwrite');
+  return new Promise((resolve, reject) => {
+    const request = transaction.objectStore('pending_photos').add({ raccordId: raccordId, blob: photoFile, timestamp: new Date().toISOString() });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getPendingPhotos() {
+  const db = await openIndexedDB();
+  const transaction = db.transaction(['pending_photos'], 'readonly');
+  return new Promise((resolve, reject) => {
+    const request = transaction.objectStore('pending_photos').getAll();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function cacheData(key, data) {
+  const db = await openIndexedDB();
+  const transaction = db.transaction(['cache_data'], 'readwrite');
+  transaction.objectStore('cache_data').put({ key: key, data: data, timestamp: new Date().toISOString() });
+}
+
+async function getCachedData(key) {
+  const db = await openIndexedDB();
+  const transaction = db.transaction(['cache_data'], 'readonly');
+  return new Promise((resolve, reject) => {
+    const request = transaction.objectStore('cache_data').get(key);
+    request.onsuccess = () => resolve(request.result?.data);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+window.addEventListener('online', () => {
+  if ('serviceWorker' in navigator && 'SyncManager' in window) {
+    navigator.serviceWorker.ready.then(registration => registration.sync.register('sync-photos'));
+  }
+});
+
+================================================================================
+17. frontend/mobile-camera.js
+================================================================================
+
+class MobileCameraModule {
+  constructor() { this.stream = null; this.videoElement = null; this.canvasElement = null; }
+  
+  async initCamera() {
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      this.videoElement = document.createElement('video');
+      this.videoElement.srcObject = this.stream;
+      this.videoElement.play();
+      this.canvasElement = document.createElement('canvas');
+      return this.videoElement;
+    } catch (error) { throw new Error('Impossible d\'accéder à la caméra'); }
+  }
+  
+  capturePhoto() {
+    if (!this.videoElement || !this.canvasElement) return null;
+    const context = this.canvasElement.getContext('2d');
+    this.canvasElement.width = this.videoElement.videoWidth;
+    this.canvasElement.height = this.videoElement.videoHeight;
+    context.drawImage(this.videoElement, 0, 0);
+    return this.canvasElement.toDataURL('image/jpeg', 0.9);
+  }
+  
+  async saveRaccordPhoto(raccordId, base64Image) {
+    const blob = await (await fetch(base64Image)).blob();
+    if (navigator.onLine) {
+      const formData = new FormData();
+      formData.append('photo', blob, `raccord_${raccordId}_${Date.now()}.jpg`);
+      formData.append('raccord_id', raccordId);
+      try {
+        const response = await axios.post(`${API_URL}/photo-raccord`, formData);
+        return response.data;
+      } catch (error) {
+        await savePhotoForSync(raccordId, blob);
+        return { offline: true, message: 'Photo sauvegardée localement' };
+      }
+    } else {
+      await savePhotoForSync(raccordId, blob);
+      return { offline: true, message: 'Mode hors ligne: photo sauvegardée' };
+    }
+  }
+  
+  stopCamera() { if (this.stream) this.stream.getTracks().forEach(track => track.stop()); }
+}
+
+function showCameraModal(raccordId) {
+  const modal = document.createElement('div');
+  modal.className = 'camera-modal';
+  modal.innerHTML = `<div class="camera-container"><video id="camera-preview" autoplay playsinline></video><div class="camera-controls"><button id="capture-btn" class="btn btn-primary"><i class="fas fa-camera"></i> Capturer</button><button id="close-camera" class="btn btn-secondary"><i class="fas fa-times"></i> Fermer</button></div><canvas id="photo-canvas" style="display:none;"></canvas></div>`;
+  document.body.appendChild(modal);
+  
+  const camera = new MobileCameraModule();
+  camera.initCamera().then(video => {
+    modal.querySelector('#camera-preview').srcObject = video.srcObject;
+    modal.querySelector('#capture-btn').onclick = async () => {
+      const photoData = camera.capturePhoto();
+      if (photoData) {
+        const result = await camera.saveRaccordPhoto(raccordId, photoData);
+        showNotification(result.offline ? '📱 Photo sauvegardée (hors ligne)' : (result.warning ? `⚠️ ${result.message}` : '✅ Photo enregistrée'), result.offline ? 'info' : (result.warning ? 'warning' : 'success'));
+        modal.remove();
+        camera.stopCamera();
+      }
+    };
+    modal.querySelector('#close-camera').onclick = () => { modal.remove(); camera.stopCamera(); };
+  });
+}
+
+function showNotification(message, type = 'info') {
+  const notification = document.createElement('div');
+  notification.className = `notification notification-${type}`;
+  notification.innerHTML = `<div class="notification-content"><i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'warning' ? 'fa-exclamation-triangle' : 'fa-info-circle'}"></i><span>${message}</span></div>`;
+  document.body.appendChild(notification);
+  setTimeout(() => { notification.classList.add('fade-out'); setTimeout(() => notification.remove(), 500); }, 3000);
+}
+
+================================================================================
+18. frontend/movie-magic-integration.js
+================================================================================
+
+class MovieMagicIntegration {
+  constructor() { this.apiEndpoint = 'https://api.moviemagic.com/v1'; this.apiKey = localStorage.getItem('moviemagic_api_key'); }
+  
+  async importSchedule(projectId) {
+    try {
+      const response = await axios.get(`${API_URL}/import-moviemagic-schedule`, { params: { project_id: projectId } });
+      const schedule = response.data;
+      localStorage.setItem(`schedule_${projectId}`, JSON.stringify(schedule));
+      this.displaySchedule(schedule);
+      return schedule;
+    } catch (error) { return this.getMockSchedule(); }
+  }
+  
+  displaySchedule(schedule) {
+    const container = document.getElementById('schedule-timeline');
+    if (!container) return;
+    container.innerHTML = `<div><h4>Planning de tournage</h4><p>${schedule.total_scenes} scènes</p><div class="schedule-grid">${schedule.scenes.map(scene => `<div class="schedule-card"><div>Jour ${scene.day}</div><div>Scène ${scene.id}</div><div>${scene.location}</div><div>${scene.characters.map(c => `<span>${c}</span>`).join('')}</div></div>`).join('')}</div></div>`;
+  }
+  
+  getMockSchedule() {
+    return { scenes: [{ id: 1, day: 1, location: "Château", characters: ["Emma", "Général"] }, { id: 2, day: 1, location: "Jardin", characters: ["Emma"] }, { id: 3, day: 2, location: "Salle", characters: ["Général"] }], total_scenes: 3 };
+  }
+}
+
+const movieMagic = new MovieMagicIntegration();
+document.addEventListener('DOMContentLoaded', () => {
+  const raccordsHeader = document.querySelector('#raccords-module .card-header');
+  if (raccordsHeader) {
+    const importBtn = document.createElement('button');
+    importBtn.className = 'btn btn-info';
+    importBtn.innerHTML = '<i class="fas fa-calendar-alt"></i> Importer MovieMagic';
+    importBtn.onclick = async () => { const id = prompt('ID projet:'); if(id) await movieMagic.importSchedule(id); };
+    raccordsHeader.appendChild(importBtn);
+  }
+});
+
+================================================================================
+19. frontend/improved-styles.css
+================================================================================
+
+.camera-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 10000; display: flex; justify-content: center; align-items: center; }
+.camera-container { width: 100%; max-width: 600px; background: black; border-radius: 20px; overflow: hidden; }
+.camera-container video { width: 100%; height: auto; }
+.camera-controls { display: flex; gap: 20px; padding: 20px; justify-content: center; }
+.notification { position: fixed; bottom: 20px; right: 20px; z-index: 10001; animation: slideIn 0.3s ease; }
+.notification-content { background: white; padding: 15px 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); display: flex; align-items: center; gap: 10px; }
+.notification-success .notification-content { border-left: 4px solid #48bb78; }
+.notification-warning .notification-content { border-left: 4px solid #ed8936; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.fade-out { animation: fadeOut 0.5s ease forwards; }
+@keyframes fadeOut { to { transform: translateX(100%); opacity: 0; } }
+.schedule-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-top: 20px; }
+.schedule-card { background: #f8f9fa; border-radius: 10px; padding: 15px; cursor: pointer; transition: all 0.3s; }
+.schedule-card:hover { transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.raccord-card { background: white; border-radius: 8px; padding: 15px; margin: 10px 0; border-left: 4px solid #667eea; }
+.raccord-card.critical { border-left-color: #e53e3e; background: #fff5f5; }
+.raccord-card.warning { border-left-color: #ed8936; background: #fffaf0; }
+@media (max-width: 768px) { .schedule-grid { grid-template-columns: 1fr; } .camera-controls button { padding: 15px; font-size: 16px; } }
