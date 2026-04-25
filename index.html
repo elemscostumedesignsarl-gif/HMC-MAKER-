@@ -1,0 +1,86 @@
+        // SÉCURITÉ
+        function checkAccess() {
+            if(document.getElementById('u-email').value === "valerie@hmc.com" && document.getElementById('u-pass').value === "cinema2026") {
+                document.getElementById('login-screen').style.display = 'none';
+            } else {
+                alert("Accès refusé - Identifiants invalides");
+            }
+        }
+
+        // IA & ANALYSE DE SCÉNARIO
+        function runAI() {
+            const list = document.getElementById('results-list');
+            list.innerHTML = "<li>⚡ Analyse IA en cours...</li>";
+            setTimeout(() => {
+                list.innerHTML = "<li>• Robe Wax (Scène 4)</li><li>• Maquillage Cicatrice (Scène 10)</li><li>• Coiffe Kinté (Scène 4)</li><li>• Costume complet d'époque (Scène 1)</li>";
+            }, 1000);
+        }
+
+        // AJOUT MANUEL POUR AJUSTEMENTS
+        function addManual() {
+            const val = document.getElementById('manual-entry').value;
+            if(val) {
+                const li = document.createElement('li');
+                li.textContent = "• " + val;
+                document.getElementById('results-list').appendChild(li);
+                document.getElementById('manual-entry').value = "";
+            }
+        }
+
+        // CALCULATEUR BUDGÉTAIRE
+        function calc() {
+            const v = document.getElementById('budget-val').value;
+            const c = document.getElementById('curr').value;
+            document.getElementById('total-view').textContent = Number(v).toLocaleString() + " " + c;
+        }
+
+        // LECTURE VOCALE MAINS-LIBRES
+        function speak() {
+            const text = document.getElementById('results-list').innerText;
+            if(text.includes("En attente")) {
+                alert("Veuillez d'abord lancer l'analyse");
+                return;
+            }
+            const u = new SpeechSynthesisUtterance(text);
+            u.lang = 'fr-FR';
+            u.rate = 0.9;
+            window.speechSynthesis.speak(u);
+        }
+
+        // GESTION DES IMAGES & MOODBOARD
+        function addImg(e) {
+            const r = new FileReader();
+            r.onload = function() {
+                const img = document.createElement('img');
+                img.src = r.result;
+                img.style.height = "100px";
+                img.style.marginRight = "10px";
+                img.style.borderRadius = "4px";
+                document.getElementById('gallery-display').appendChild(img);
+            };
+            r.readAsDataURL(e.target.files[0]);
+        }
+
+        // EXPORTS PROFESSIONNELS (EXCEL & WORD)
+        function exportExcel() {
+            const v = document.getElementById('budget-val').value;
+            const c = document.getElementById('curr').value;
+            const ws = XLSX.utils.aoa_to_sheet([
+                ["HMC MAKER - DEVIS PROFESSIONNEL"],
+                ["PROJET", "L'HÉRITIER SILENCIEUX"],
+                ["DESIGNER", "VALÉRIE ELEMVA"],
+                [],
+                ["POSTE", "MONTANT", "DEVISE"],
+                ["HMC GLOBAL", v, c],
+                ["LICENCE LOGICIEL", "35", "EUR"]
+            ]);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Budget");
+            XLSX.writeFile(wb, "HMC_Budget_ECD_SARL.xlsx");
+        }
+
+        function exportWord() {
+            const content = document.getElementById('results-list').innerText;
+            const blob = new Blob(["HMC MAKER - RAPPORT DE DÉPOUILLEMENT\n\n" + content], {type: "application/msword"});
+            saveAs(blob, "HMC_Depouillement_Technique.doc");
+        }
