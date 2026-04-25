@@ -6,130 +6,74 @@
     <title>HMC MAKER PRO — ECD SARL</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
-        :root { --bg: #0f0f14; --side: #16161d; --accent-h: #ff9f43; --accent-m: #ff4757; --accent-c: #2e86de; --gold: #d4a84b; --text: #ffffff; }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: var(--bg); color: var(--text); font-family: 'Montserrat', sans-serif; display: flex; height: 100vh; overflow: hidden; }
-        nav { width: 260px; background: var(--side); border-right: 1px solid #222; display: flex; flex-direction: column; padding: 20px; }
-        .logo { font-weight: 600; letter-spacing: 2px; margin-bottom: 40px; border-bottom: 1px solid #333; padding-bottom: 10px; }
-        .nav-item { padding: 12px; margin: 5px 0; cursor: pointer; border-radius: 4px; font-size: 13px; transition: 0.3s; display: flex; justify-content: space-between; }
+        :root { --bg: #0f0f14; --side: #16161d; --gold: #d4a84b; --costume: #2e86de; --makeup: #ff4757; --hair: #ff9f43; }
+        body { background: var(--bg); color: #fff; font-family: 'Montserrat', sans-serif; display: flex; height: 100vh; margin: 0; }
+        
+        /* Menu Latéral */
+        nav { width: 260px; background: var(--side); border-right: 1px solid #222; padding: 20px; display: flex; flex-direction: column; }
+        .nav-item { padding: 12px; margin: 5px 0; cursor: pointer; border-radius: 4px; font-size: 13px; border-left: 3px solid transparent; }
         .nav-item:hover { background: #252535; }
-        .active { background: #252535; border-left: 3px solid var(--gold); }
-        .count { font-size: 10px; background: #333; padding: 2px 6px; border-radius: 10px; }
-        main { flex: 1; display: flex; flex-direction: column; }
-        header { height: 60px; border-bottom: 1px solid #222; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; background: var(--side); }
-        .content-area { flex: 1; padding: 30px; overflow-y: auto; }
-        .panel { display: none; }
-        .panel.active-panel { display: block; }
-        .card { background: #1c1c24; border: 1px solid #2a2a35; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 11px; text-transform: uppercase; }
-        .btn-gold { background: var(--gold); color: #000; }
-        .prop-fiche { background: #fff; color: #000; padding: 20px; border-radius: 4px; margin-top: 10px; border: 2px solid #000; }
-        .img-placeholder { width: 100%; height: 150px; background: #eee; border: 1px dashed #ccc; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #999; }
+        .active-c { border-left-color: var(--costume); background: #1a1a2b; }
+        .active-m { border-left-color: var(--makeup); background: #2b1a1a; }
+        .active-h { border-left-color: var(--hair); background: #2b231a; }
+
+        /* Zone de Travail */
+        main { flex: 1; overflow-y: auto; padding: 30px; }
+        .section-panel { display: none; }
+        .active-panel { display: block; }
+        .card { background: #1c1c24; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #2a2a35; }
+        
+        /* Outils Visuels */
+        .moodboard-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 20px; }
+        .drop-zone { height: 150px; border: 2px dashed #444; display: flex; align-items: center; justify-content: center; background: #111; }
     </style>
 </head>
 <body>
 
 <nav>
-    <div class="logo">HMC <span style="color:var(--gold)">●●●</span> MAKER</div>
-    <div style="font-size: 10px; color: #666; margin-bottom: 10px;">DÉPARTEMENTS</div>
-    <div class="nav-item active" onclick="showPanel('dash')">Dashboard</div>
-    <div class="nav-item" onclick="showPanel('hair')">Hair <span class="count" style="color:var(--accent-h)">0</span></div>
-    <div class="nav-item" onclick="showPanel('makeup')">Make-up <span class="count" style="color:var(--accent-m)">0</span></div>
-    <div class="nav-item" onclick="showPanel('costume')">Costume <span class="count" style="color:var(--accent-c)">0</span></div>
-    <div style="font-size: 10px; color: #666; margin: 20px 0 10px 0;">OUTILS PRODUCTION</div>
-    <div class="nav-item" onclick="showPanel('prop')">Fiches Visuelles</div>
-    <div class="nav-item" onclick="showPanel('budget')">Budget</div>
+    <h2 style="color:var(--gold); font-size:18px; margin-bottom:30px;">HMC MAKER</h2>
+    <div class="nav-item active-c" onclick="switchTab('costume')">👕 DÉPT. COSTUME</div>
+    <div class="nav-item" onclick="switchTab('makeup')">💄 DÉPT. MAQUILLAGE</div>
+    <div class="nav-item" onclick="switchTab('hair')">💇 DÉPT. COIFFURE</div>
+    <hr style="border:0; border-top:1px solid #333; margin:20px 0;">
+    <div class="nav-item" onclick="switchTab('moodboard')">🖼️ MOODBOARD / FICHES</div>
+    <div class="nav-item" onclick="switchTab('devis')">💰 DEVIS & EXPORT</div>
 </nav>
 
 <main>
-    <header>
-        <div id="current-title">STUDIO DE PRODUCTION</div>
-        <div style="display:flex; gap:15px;">
-            <select id="lang" style="background:#000; color:#fff; border:1px solid #444;" onchange="changeLang()">
-                <option value="fr">FRANÇAIS</option>
-                <option value="en">ENGLISH</option>
-            </select>
-            <button class="btn btn-gold">IMPORT</button>
-            <button class="btn btn-gold">EXPORT</button>
+    <div id="panel-costume" class="section-panel active-panel">
+        <h1>Gestion Costume</h1>
+        <div class="card">
+            <h3>Dépouillement Textile</h3>
+            <textarea placeholder="Liste des costumes par scène..." style="width:100%; height:100px; background:#000; color:#fff; border:1px solid #444; padding:10px;"></textarea>
         </div>
-    </header>
-
-    <div class="content-area">
-        <div id="panel-dash" class="panel active-panel">
-            <h2 style="margin-bottom:20px;">VUE D'ENSEMBLE DU PROJET</h2>
-            <div class="grid">
-                <div class="card" style="border-top: 4px solid var(--accent-c);">
-                    <h3>Costumes</h3>
-                    <p id="c-count">0 éléments enregistrés</p>
-                </div>
-                <div class="card" style="border-top: 4px solid var(--accent-m);">
-                    <h3>Maquillage</h3>
-                    <p id="m-count">0 effets spéciaux</p>
-                </div>
-                <div class="card" style="border-top: 4px solid var(--accent-h);">
-                    <h3>Coiffure</h3>
-                    <p id="h-count">0 styles</p>
-                </div>
-            </div>
-        </div>
-
-        <div id="panel-prop" class="panel">
-            <h2>GÉNÉRATEUR DE PROPOSITIONS VISUELLES</h2>
-            <div class="card">
-                <p style="font-size: 12px; margin-bottom: 15px;">Créez une fiche complète pour validation de personnage.</p>
-                <input type="text" id="char-name" placeholder="Nom du Personnage / Rôle" style="width:100%; padding:12px; background:#000; color:#fff; border:1px solid #333; margin-bottom:10px;">
-                <button class="btn btn-gold" onclick="generateFiche()">GÉNÉRER LA FICHE TECHNIQUE</button>
-            </div>
-            <div id="fiche-container"></div>
-        </div>
-
-        <div id="panel-hair" class="panel"><h2>GESTION COIFFURE</h2><div class="card">Outil de suivi capillaire et perruques.</div></div>
-        <div id="panel-makeup" class="panel"><h2>GESTION MAQUILLAGE</h2><div class="card">Outil de suivi SFX et beauté.</div></div>
-        <div id="panel-costume" class="panel"><h2>GESTION COSTUME</h2><div class="card">Outil de suivi textile et accessoires.</div></div>
-        <div id="panel-budget" class="panel"><h2>BUDGET HMC</h2><div class="card">Suivi des dépenses par département.</div></div>
     </div>
-</main>
+
+    <div id="panel-moodboard" class="section-panel">
+        <h1>Générateur de Propositions Visuelles</h1>
+        <div class="card">
+            <input type="text" placeholder="Nom du Personnage" style="padding:10px; width:300px;">
+            <div class="moodboard-grid">
+                <div><label>Réf. Costume</label><div class="drop-zone">IMAGE</div></div>
+                <div><label>Réf. Maquillage</label><div class="drop-zone">IMAGE</div></div>
+                <div><label>Réf. Coiffure</label><div class="drop-zone">IMAGE</div></div>
+            </div>
+            <button style="margin-top:20px; padding:10px 20px; background:var(--gold); border:none; cursor:pointer;">GÉNÉRER FICHE PDF</button>
+        </div>
+    </div>
+
+    </main>
 
 <script>
-    function showPanel(id) {
-        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active-panel'));
-        const target = document.getElementById('panel-' + id);
-        if(target) target.classList.add('active-panel');
+    function switchTab(tabId) {
+        document.querySelectorAll('.section-panel').forEach(p => p.classList.remove('active-panel'));
+        document.getElementById('panel-' + tabId).classList.add('active-panel');
         
-        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-        if(event) event.currentTarget.classList.add('active');
-        
-        document.getElementById('current-title').innerText = id.toUpperCase();
-    }
-
-    function generateFiche() {
-        const name = document.getElementById('char-name').value || "NOUVEAU PERSONNAGE";
-        const container = document.getElementById('fiche-container');
-        const fiche = `
-            <div class="prop-fiche">
-                <div style="display:flex; justify-content:space-between; border-bottom:1px solid #000; padding-bottom:10px; margin-bottom:15px;">
-                    <h2 style="font-family:'Montserrat'; font-weight:600;">PROPOSITION HMC : ${name}</h2>
-                    <span style="font-size:10px;">ECD SARL - STUDIO</span>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:15px;">
-                    <div><strong style="font-size:10px;">COSTUME</strong><div class="img-placeholder">IMAGE RÉFÉRENCE</div></div>
-                    <div><strong style="font-size:10px;">COIFFURE</strong><div class="img-placeholder">IMAGE RÉFÉRENCE</div></div>
-                    <div><strong style="font-size:10px;">MAQUILLAGE</strong><div class="img-placeholder">IMAGE RÉFÉRENCE</div></div>
-                </div>
-                <div style="margin-top:15px; border-top:1px solid #eee; padding-top:10px;">
-                    <p style="font-size:11px;"><strong>Notes :</strong> Dossier technique à l'usage de la production.</p>
-                </div>
-                <button class="btn btn-gold" style="margin-top:15px; width:100%; color:#fff; background:#000;" onclick="window.print()">EXPORTER EN PDF</button>
-            </div>`;
-        container.innerHTML = fiche + container.innerHTML;
-    }
-
-    function changeLang() {
-        const l = document.getElementById('lang').value;
-        alert(l === 'en' ? "Interface set to English" : "Interface en Français");
+        document.querySelectorAll('.nav-item').forEach(i => {
+            i.classList.remove('active-c', 'active-m', 'active-h');
+        });
+        // Logique simplifiée pour l'exemple
     }
 </script>
-
 </body>
 </html>
