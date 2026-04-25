@@ -25,13 +25,13 @@
     </style>
 </head>
 <body>
+
     <div id="login-screen">
         <div class="login-card">
             <h2 style="font-family:'Playfair Display';">HMC MAKER</h2>
-            <p style="font-size:10px; color:var(--gold); margin-bottom:20px;">SYSTEME DE GESTION ECD SARL</p>
-            <input type="email" id="u-email" placeholder="Email">
-            <input type="password" id="u-pass" placeholder="Mot de passe">
-            <button class="btn btn-primary" style="width:100%; margin-top:20px;" onclick="checkAccess()">ENTRER</button>
+            <p style="font-size:10px; color:var(--gold); margin-bottom:20px;">SYSTÈME DE GESTION ECD SARL</p>
+            <p style="font-size:9px; margin-bottom:10px; color:var(--muted);">Cliquez sur ENTRER pour tester</p>
+            <button class="btn btn-primary" style="width:100%;" onclick="checkAccess()">ENTRER</button>
         </div>
     </div>
 
@@ -46,14 +46,14 @@
 
         <div class="hmc-grid">
             <div class="card">
-                <h3>1. Import & Analyse IA</h3>
+                <h3>1. Analyse de Scénario</h3>
                 <div class="upload-box" onclick="runAI()">DÉPOSER SCÉNARIO</div>
                 <button class="btn btn-primary" onclick="speak()" style="width:100%; margin-top:10px;">🔊 Lecture Vocale</button>
             </div>
             <div class="card">
-                <h3>2. Résultats Dépouillement</h3>
+                <h3>2. Dépouillement HMC</h3>
                 <ul id="results-list" style="margin-top:10px; min-height:80px; list-style:none;">
-                    <li style="color:var(--muted);">En attente de fichier...</li>
+                    <li style="color:var(--muted);">Aucune donnée chargée.</li>
                 </ul>
                 <input type="text" id="manual-entry" placeholder="+ Ajout manuel" onkeydown="if(event.key==='Enter') addManual()">
             </div>
@@ -61,7 +61,7 @@
 
         <div class="hmc-grid">
             <div class="card" style="border-left:4px solid var(--gold);">
-                <label>Budget & Devise</label>
+                <label>Budget Prévisionnel</label>
                 <input type="number" id="budget-val" value="65000" oninput="calc()">
                 <select id="curr" onchange="calc()" style="margin-top:10px;">
                     <option value="FCFA">FCFA</option>
@@ -70,27 +70,30 @@
                 <h2 id="total-view" style="color:var(--gold); font-size:24px; margin-top:15px;">65 000 FCFA</h2>
             </div>
             <div class="card">
-                <h3>3. Moodboard Visuel</h3>
+                <h3>3. Moodboard Dynamique</h3>
                 <input type="file" id="img-in" accept="image/*" style="display:none" onchange="addImg(event)">
-                <button class="btn btn-outline" onclick="document.getElementById('img-in').click()">📸 Importer Image</button>
+                <button class="btn btn-outline" onclick="document.getElementById('img-in').click()">📸 Importer Image/Tissu</button>
                 <div id="gallery-display" style="display:flex; margin-top:15px; overflow-x:auto;"></div>
             </div>
         </div>
     </main>
 
     <script>
+        // SÉCURITÉ SIMPLIFIÉE POUR LE TEST
         function checkAccess() {
-            if(document.getElementById('u-email').value === "valerie@hmc.com" && document.getElementById('u-pass').value === "cinema2026") {
-                document.getElementById('login-screen').style.display = 'none';
-            } else { alert("Accès refusé"); }
+            document.getElementById('login-screen').style.display = 'none';
         }
+
+        // SIMULATION IA
         function runAI() {
             const list = document.getElementById('results-list');
-            list.innerHTML = "<li>⚡ Analyse en cours...</li>";
+            list.innerHTML = "<li>⚡ Analyse IA en cours...</li>";
             setTimeout(() => {
-                list.innerHTML = "<li>• Robe Wax (Scène 4)</li><li>• Maquillage Cicatrice (Scène 10)</li><li>• Coiffe Kinté (Scène 4)</li><li>• Costume d'époque (Scène 1)</li>";
+                list.innerHTML = "<li>• Robe Wax (Scène 4)</li><li>• Maquillage Cicatrice (Scène 10)</li><li>• Coiffe Kinté (Scène 4)</li><li>• Tenue Protagoniste (Scène 1)</li>";
             }, 1000);
         }
+
+        // AJOUT MANUEL
         function addManual() {
             const val = document.getElementById('manual-entry').value;
             if(val) {
@@ -100,17 +103,23 @@
                 document.getElementById('manual-entry').value = "";
             }
         }
+
+        // CALCULS
         function calc() {
             const v = document.getElementById('budget-val').value;
             const c = document.getElementById('curr').value;
             document.getElementById('total-view').textContent = Number(v).toLocaleString() + " " + c;
         }
+
+        // LECTURE VOCALE
         function speak() {
             const text = document.getElementById('results-list').innerText;
             const u = new SpeechSynthesisUtterance(text);
             u.lang = 'fr-FR';
             window.speechSynthesis.speak(u);
         }
+
+        // GESTION IMAGES
         function addImg(e) {
             const r = new FileReader();
             r.onload = function() {
@@ -120,18 +129,22 @@
             };
             r.readAsDataURL(e.target.files[0]);
         }
+
+        // EXPORTS
         function exportExcel() {
             const v = document.getElementById('budget-val').value;
             const c = document.getElementById('curr').value;
-            const ws = XLSX.utils.aoa_to_sheet([["PROJET","L'HERITIER SILENCIEUX"],["POSTE","BUDGET"],["TOTAL", v, c]]);
+            const data = [["PROJET","L'HERITIER SILENCIEUX"],["POSTE","BUDGET"],["HMC TOTAL", v + " " + c]];
+            const ws = XLSX.utils.aoa_to_sheet(data);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Budget");
-            XLSX.writeFile(wb, "HMC_Budget.xlsx");
+            XLSX.writeFile(wb, "HMC_Budget_ECD.xlsx");
         }
+
         function exportWord() {
             const content = document.getElementById('results-list').innerText;
-            const blob = new Blob(["RAPPORT HMC\n\n" + content], {type: "application/msword"});
-            saveAs(blob, "HMC_Export.doc");
+            const blob = new Blob(["RAPPORT HMC MAKER\n\n" + content], {type: "application/msword"});
+            saveAs(blob, "HMC_Depouillement.doc");
         }
     </script>
 </body>
