@@ -1,22 +1,96 @@
-        // SÉCURITÉ
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HMC MAKER — Expert Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg: #0c0c0f; --surface: #13131a; --border: #252535; --gold: #d4a84b; --white: #eeeef8; --muted: #4a4a6a; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--white); font-family: 'Space Mono', monospace; font-size: 12px; }
+        #login-screen { position:fixed; top:0; left:0; width:100%; height:100%; background:var(--bg); z-index:9999; display:flex; align-items:center; justify-content:center; }
+        .login-card { background:var(--surface); border:1px solid var(--border); padding:40px; width:90%; max-width:400px; text-align:center; }
+        input, select { background: var(--bg); border: 1px solid #2e2e42; color: var(--white); padding: 12px; width: 100%; margin-top: 10px; outline: none; }
+        main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+        .hmc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
+        .card { background: var(--surface); padding: 24px; border: 1px solid var(--border); }
+        .btn { padding: 12px 20px; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 10px; border: none; margin-top: 5px; }
+        .btn-primary { background: var(--white); color: var(--bg); }
+        .btn-outline { background: transparent; border: 1px solid var(--gold); color: var(--gold); }
+        .upload-box { border: 2px dashed var(--muted); padding: 30px; text-align: center; cursor: pointer; }
+        #gallery-display img { height: 80px; border-radius: 4px; margin-right: 10px; border: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <div id="login-screen">
+        <div class="login-card">
+            <h2 style="font-family:'Playfair Display';">HMC MAKER</h2>
+            <p style="font-size:10px; color:var(--gold); margin-bottom:20px;">SYSTEME DE GESTION ECD SARL</p>
+            <input type="email" id="u-email" placeholder="Email">
+            <input type="password" id="u-pass" placeholder="Mot de passe">
+            <button class="btn btn-primary" style="width:100%; margin-top:20px;" onclick="checkAccess()">ENTRER</button>
+        </div>
+    </div>
+
+    <main>
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:20px;">
+            <h1 style="font-family:'Playfair Display'; font-size:18px;">L'HÉRITIER SILENCIEUX</h1>
+            <div style="display:flex; gap:5px;">
+                <button class="btn btn-outline" onclick="exportExcel()">📊 Excel</button>
+                <button class="btn btn-outline" onclick="exportWord()">📄 Word</button>
+            </div>
+        </div>
+
+        <div class="hmc-grid">
+            <div class="card">
+                <h3>1. Import & Analyse IA</h3>
+                <div class="upload-box" onclick="runAI()">DÉPOSER SCÉNARIO</div>
+                <button class="btn btn-primary" onclick="speak()" style="width:100%; margin-top:10px;">🔊 Lecture Vocale</button>
+            </div>
+            <div class="card">
+                <h3>2. Résultats Dépouillement</h3>
+                <ul id="results-list" style="margin-top:10px; min-height:80px; list-style:none;">
+                    <li style="color:var(--muted);">En attente de fichier...</li>
+                </ul>
+                <input type="text" id="manual-entry" placeholder="+ Ajout manuel" onkeydown="if(event.key==='Enter') addManual()">
+            </div>
+        </div>
+
+        <div class="hmc-grid">
+            <div class="card" style="border-left:4px solid var(--gold);">
+                <label>Budget & Devise</label>
+                <input type="number" id="budget-val" value="65000" oninput="calc()">
+                <select id="curr" onchange="calc()" style="margin-top:10px;">
+                    <option value="FCFA">FCFA</option>
+                    <option value="EUR">EUR</option>
+                </select>
+                <h2 id="total-view" style="color:var(--gold); font-size:24px; margin-top:15px;">65 000 FCFA</h2>
+            </div>
+            <div class="card">
+                <h3>3. Moodboard Visuel</h3>
+                <input type="file" id="img-in" accept="image/*" style="display:none" onchange="addImg(event)">
+                <button class="btn btn-outline" onclick="document.getElementById('img-in').click()">📸 Importer Image</button>
+                <div id="gallery-display" style="display:flex; margin-top:15px; overflow-x:auto;"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
         function checkAccess() {
             if(document.getElementById('u-email').value === "valerie@hmc.com" && document.getElementById('u-pass').value === "cinema2026") {
                 document.getElementById('login-screen').style.display = 'none';
-            } else {
-                alert("Accès refusé - Identifiants invalides");
-            }
+            } else { alert("Accès refusé"); }
         }
-
-        // IA & ANALYSE DE SCÉNARIO
         function runAI() {
             const list = document.getElementById('results-list');
-            list.innerHTML = "<li>⚡ Analyse IA en cours...</li>";
+            list.innerHTML = "<li>⚡ Analyse en cours...</li>";
             setTimeout(() => {
-                list.innerHTML = "<li>• Robe Wax (Scène 4)</li><li>• Maquillage Cicatrice (Scène 10)</li><li>• Coiffe Kinté (Scène 4)</li><li>• Costume complet d'époque (Scène 1)</li>";
+                list.innerHTML = "<li>• Robe Wax (Scène 4)</li><li>• Maquillage Cicatrice (Scène 10)</li><li>• Coiffe Kinté (Scène 4)</li><li>• Costume d'époque (Scène 1)</li>";
             }, 1000);
         }
-
-        // AJOUT MANUEL POUR AJUSTEMENTS
         function addManual() {
             const val = document.getElementById('manual-entry').value;
             if(val) {
@@ -26,61 +100,39 @@
                 document.getElementById('manual-entry').value = "";
             }
         }
-
-        // CALCULATEUR BUDGÉTAIRE
         function calc() {
             const v = document.getElementById('budget-val').value;
             const c = document.getElementById('curr').value;
             document.getElementById('total-view').textContent = Number(v).toLocaleString() + " " + c;
         }
-
-        // LECTURE VOCALE MAINS-LIBRES
         function speak() {
             const text = document.getElementById('results-list').innerText;
-            if(text.includes("En attente")) {
-                alert("Veuillez d'abord lancer l'analyse");
-                return;
-            }
             const u = new SpeechSynthesisUtterance(text);
             u.lang = 'fr-FR';
-            u.rate = 0.9;
             window.speechSynthesis.speak(u);
         }
-
-        // GESTION DES IMAGES & MOODBOARD
         function addImg(e) {
             const r = new FileReader();
             r.onload = function() {
                 const img = document.createElement('img');
                 img.src = r.result;
-                img.style.height = "100px";
-                img.style.marginRight = "10px";
-                img.style.borderRadius = "4px";
                 document.getElementById('gallery-display').appendChild(img);
             };
             r.readAsDataURL(e.target.files[0]);
         }
-
-        // EXPORTS PROFESSIONNELS (EXCEL & WORD)
         function exportExcel() {
             const v = document.getElementById('budget-val').value;
             const c = document.getElementById('curr').value;
-            const ws = XLSX.utils.aoa_to_sheet([
-                ["HMC MAKER - DEVIS PROFESSIONNEL"],
-                ["PROJET", "L'HÉRITIER SILENCIEUX"],
-                ["DESIGNER", "VALÉRIE ELEMVA"],
-                [],
-                ["POSTE", "MONTANT", "DEVISE"],
-                ["HMC GLOBAL", v, c],
-                ["LICENCE LOGICIEL", "35", "EUR"]
-            ]);
+            const ws = XLSX.utils.aoa_to_sheet([["PROJET","L'HERITIER SILENCIEUX"],["POSTE","BUDGET"],["TOTAL", v, c]]);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Budget");
-            XLSX.writeFile(wb, "HMC_Budget_ECD_SARL.xlsx");
+            XLSX.writeFile(wb, "HMC_Budget.xlsx");
         }
-
         function exportWord() {
             const content = document.getElementById('results-list').innerText;
-            const blob = new Blob(["HMC MAKER - RAPPORT DE DÉPOUILLEMENT\n\n" + content], {type: "application/msword"});
-            saveAs(blob, "HMC_Depouillement_Technique.doc");
+            const blob = new Blob(["RAPPORT HMC\n\n" + content], {type: "application/msword"});
+            saveAs(blob, "HMC_Export.doc");
         }
+    </script>
+</body>
+</html>
